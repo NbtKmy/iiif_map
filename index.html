@@ -1,72 +1,38 @@
-<!DOCTYPE html>
-<html lang="en">
+<!doctype html>
+<html lang="ja">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Step 1: IIIF Viewer (Minimal)</title>
-
-  <!-- Leaflet -->
-  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
-  <!-- App CSS -->
-  <link rel="stylesheet" href="./styles.css"/>
+  <meta charset="utf-8" />
+  <title>IIIF Loader</title>
+  <link rel="stylesheet" href="./styles/intro_style.css" />
 </head>
 <body>
-  <header>
-    <h1>Step 1: IIIF Manifest → Image Viewer</h1>
-  </header>
+  <aside class="panel">
+    <label>IIIF Manifest or info.json URL</label>
+    <div class="row">
+      <input id="iiifUrl" type="url" placeholder="https://…/manifest.json or …/info.json" />
+      <button id="load">Load</button>
+    </div>
+    <div id="status" class="muted"> </div>
 
-  <main class="wrap">
-    <section class="controls">
-      <label for="manifestUrl">IIIF Manifest or info.json URL</label>
-      <input id="manifestUrl" type="text"
-             placeholder="https://.../manifest.json or .../info.json"
-             value="https://iiif.harvardartmuseums.org/manifests/object/299843" />
-      <div class="row">
-        <button id="btnLoad">Load</button>
-        <span id="status" class="status"></span>
-      </div>
-      <div class="row">
-        <label for="opacity">Opacity</label>
-        <input id="opacity" type="range" min="0" max="1" step="0.01" value="1" />
-        <span id="opacityVal" class="status">100%</span>
-      </div>
-      <div class="row">
-        <label for="rotation">Rotation</label>
-        <input id="rotation" type="range" min="-180" max="180" step="1" value="0" />
-        <span id="rotationVal" class="status">0°</span>
-        <button id="rotationReset" type="button">Reset</button>
-        <label style="margin-left:12px;">
-        <input id="autoFit" type="checkbox" />
-        Auto-fit on rotate
-        </label>
-        <button id="fitNow" type="button">Fit</button>
-      </div>
-      <p class="hint">
-        • Supports IIIF Image API v2 and v3. If you provide an <code>info.json</code>,
-        thumbnails are hidden (no manifest).<br/>
-        • If tiles fail to load (CORS, permissions), it automatically falls back to a single image.
-      </p>
-    </section>
+    <div class="ctrl">
+      
+      <small class="muted">
+        • IIIF Image API v2/v3 対応。info.json の場合はサムネは非表示（単一画像モード）<br/>
+        • タイルがCORSで失敗しても、単一画像（full/!w,h）に自動フォールバック
+      </small>
+    </div>
 
-    <section class="map-panel">
-      <div id="map"></div>
-      <!-- NEW: Thumbnails strip -->
-      <div id="thumbsPanel" class="thumbs-panel hidden">
-        <div class="thumbs-header">
-          <span>Pages</span>
-          <span id="thumbsCount" class="muted"></span>
-        </div>
-        <div id="thumbs" class="thumbs"></div>
-      </div>
-    </section>
+    <button id="goEdit" class="primary" disabled>エディット画面に遷移</button>
+  </aside>
+
+  <main>
+    <div id="stage">
+      <img id="mainImage" alt="" />
+    </div>
+    <div id="thumbs"></div>
+    <div id="pageCount" class="muted"></div>
   </main>
 
-  <!-- Leaflet core -->
-  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-  <!-- Leaflet-IIIF (tiles) -->
-  <script src="https://unpkg.com/leaflet-iiif@3.0.0/leaflet-iiif.js"></script>
-  <script src="https://unpkg.com/leaflet-imageoverlay-rotated@0.2.0/leaflet.imageoverlay.rotated.js"></script>
-  <!-- App JS -->
-  <script src="./app.js"></script>
+  <script src="./src/intro.js"></script>
 </body>
 </html>
