@@ -103,7 +103,7 @@ $('#load').addEventListener('click', async ()=>{
     $('#goEdit').disabled = false;
   } catch(e){
     console.error(e);
-    status('読み込み失敗: ' + e.message);
+    status('Reading error: ' + e.message);
     $('#goEdit').disabled = true;
   }
 });
@@ -132,22 +132,31 @@ function renderThumbs(){
     const img = document.createElement('img');
     img.alt = cav.label || `Page ${i+1}`;
     img.src = cav.imageServiceBase ? buildPreviewUrl(cav.imageServiceBase, 400) : '';
+    img.loading = 'lazy';
+    img.decoding = 'async';
+
     div.appendChild(img);
     div.addEventListener('click', ()=>{
       model.selectedIndex = i;
-      renderMain(); renderThumbs();
+      renderMain();
+      renderThumbs();
     });
+
     wrap.appendChild(div);
   });
+
+  // 選択中のサムネイルが見える位置までスクロール（再描画後に1回）
+  const active = wrap.querySelector('.thumb.active');
+  if (active) active.scrollIntoView({ inline: 'nearest', block: 'nearest', behavior: 'smooth' });
 }
 
 
+
 // ---------- エディット画面へ遷移（データの受け渡し） ----------
-// 方法A: localStorage（大きいデータもOK）
 $('#goEdit').addEventListener('click', ()=>{
   const cav = model.canvases[model.selectedIndex];
   const payload = {
-    manifestUrl: model.manifestUrl,      // info.json の場合は null
+    manifestUrl: model.manifestUrl,
     canvas: {
       id: cav.id,
       label: cav.label,
@@ -158,16 +167,7 @@ $('#goEdit').addEventListener('click', ()=>{
     }
   };
   localStorage.setItem('iiif-edit-payload', JSON.stringify(payload));
-  // 例: editor.html に遷移
   location.href = './editor.html';
 });
 
-// 方法B: URL パラメータ（必要なら。短い情報向き）
-/*
-// 代替：URLSearchParams で渡す場合
-const p = new URLSearchParams({
-  manifest: model.manifestUrl || '',
-  canvas: model.canvases[model.selectedIndex].id,
-});
-location.href = './editor.html?' + p.toString();
-*/
+

@@ -1,3 +1,26 @@
+// ===== プロジェクト保存（Annotation の配列） =====
+const PROJECT_KEY = 'allmaps-project-items';
+
+function loadProject() {
+  try { return JSON.parse(localStorage.getItem(PROJECT_KEY) || '[]'); }
+  catch { return []; }
+}
+function saveProject(arr) {
+  localStorage.setItem(PROJECT_KEY, JSON.stringify(arr));
+}
+function addToProject(item) {
+  const p = loadProject();
+  p.push(item);
+  saveProject(p);
+  return p;
+}
+function removeFromProject(idx) {
+  const p = loadProject();
+  p.splice(idx, 1);
+  saveProject(p);
+  return p;
+}
+
 (function () {
   'use strict';
 
@@ -11,10 +34,21 @@
 
   const payload = readEditPayload();
   if (!payload || !payload.canvas) {
-    alert('導入画面からのデータが見つかりません。index.html へ戻ります。');
+    alert('No data found. Back to index.html');
     location.href = './index.html';
     return;
   }
+
+  async function ensureImageReady(img) {
+    const im = img && img._image;
+    if (!im) throw new Error('image element missing');
+    if (im.complete && im.naturalWidth > 0) return;
+    await new Promise((res, rej) => {
+      im.addEventListener('load',  res, { once:true });
+      im.addEventListener('error', () => rej(new Error('image load failed')), { once:true });
+    });
+  }
+
 
   // ========= 画像URL（IIIF Image API 単画像） =========
   const imageUrlFromServiceBase = (base, max = 2400) =>
@@ -22,8 +56,44 @@
 
   const IMAGE_URL = imageUrlFromServiceBase(payload.canvas.imageServiceBase, 2400);
   if (!IMAGE_URL) {
-    alert('ImageService が見つからず画像を表示できません。');
+    alert('No ImageService found');
     return;
+  }
+
+  function makeAllmapsSource(payload, resource) {
+    // かならずベースURL（/full/... を除去 & 末尾スラ削除）
+    const baseId = (resource.id || payload.canvas.imageServiceBase || '')
+      .replace(/\/info\.json$/, '')
+      .replace(/\/full\/.*$/, '')
+      .replace(/\/$/, '');
+
+    const type = resource.type || (payload.canvas.apiVer === 3 ? 'ImageService3' : 'ImageService2');
+
+    return {
+      id: baseId,
+      type,
+      // 念のため整数化
+      width: (resource.width|0),
+      height: (resource.height|0),
+      partOf: [
+        {
+          id: payload.canvas.id,
+          type: 'Canvas',
+          width: (payload.canvas.width|0),
+          height: (payload.canvas.height|0),
+          ...(payload.manifestUrl ? {
+            partOf: [
+              {
+                id: payload.manifestUrl,
+                type: 'Manifest',
+                // ラベルが取れるなら付ける（任意）
+                ...(payload.canvas.manifestLabel ? { label: payload.canvas.manifestLabel } : {})
+              }
+            ]
+          } : {})
+        }
+      ]
+    };
   }
 
   // ========= Allmaps target 資材（後で選択して使う） =========
@@ -83,120 +153,145 @@
   map.addControl(drawControl);
   map.on(L.Draw.Event.CREATED, (e) => drawnItems.addLayer(e.layer));
 
-  // ========= 右上 UI =========
-  const Ctl = L.Control.extend({
-    onAdd: function () {
-      const el = L.DomUtil.create('div', 'ctl');
-      el.innerHTML = `
-        <label>Transparency:
+ // ========= 右上 UI（保存/追加/終了 と リスト） =========
+const Ctl = L.Control.extend({
+  onAdd: function () {
+    const el = L.DomUtil.create('div', 'ctl');
+    el.style.maxWidth = '300px';
+    el.innerHTML = `
+      <div style="display:flex;gap:8px;align-items:center;margin-bottom:6px;">
+        <label style="white-space:nowrap;">Opacity:
           <input id="opacity" type="range" min="0" max="1" step="0.05" value="0.7">
         </label>
-        <button id="exportAllmaps">Allmaps Georeference JSON</button>
-      `;
-      L.DomEvent.disableClickPropagation(el);
-      return el;
-    }
-  });
-  map.addControl(new Ctl({ position: 'topright' }));
+      </div>
 
-  // 透明度
-  document.getElementById('opacity').addEventListener('input', (e) => {
-    img.setOpacity(parseFloat(e.target.value));
-  });
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px;">
+        <button id="saveToProject">Save this item into your project</button>
+        <button id="addAnother">Add a new image</button>
+        <button id="downloadPage" class="primary">Download AnnotationPage</button>
+      </div>
 
-  // ========= Allmaps 出力 =========
-  document.getElementById('exportAllmaps').addEventListener('click', async () => {
-    try {
-      // 1) GCP: 最後に描いたポリゴンから点群取得
-      const layers = Object.values(drawnItems._layers);
-      if (!layers.length) { alert('まずポリゴン（境界/GCP用）を描いてください'); return; }
-      const poly = layers[layers.length - 1];
-      let latlngs = poly.getLatLngs();
-      latlngs = Array.isArray(latlngs[0]) ? latlngs[0] : latlngs;
+      <div id="savedCount" style="font-weight:600;margin:6px 0 4px;">
+        Saved items（${loadProject().length}）
+      </div>
+      <div id="projectList" style="max-height:240px;overflow:auto;border:1px solid #e5e7eb;border-radius:8px;padding:6px;background:#fff;"></div>
+    `;
+    L.DomEvent.disableClickPropagation(el);
+    return el;
+  }
+});
+map.addControl(new Ctl({ position: 'topright' }));
 
-      // 2) 変換（LatLng → プレビュー画像のピクセル）
-const T = buildTransforms(img, map);
-const latlongArray = latlngs.map(ll => [ll.lat, ll.lng]);
-const pixelPreview = latlngs.map(ll => {
-  const { u, v } = T.latLngToImagePixel(ll);
-  return [u, v]; // ここはプレビュー(!2400など)のピクセル
+// 透明度
+document.getElementById('opacity').addEventListener('input', (e) => {
+  img.setOpacity(parseFloat(e.target.value));
 });
 
-// 3) resource（原寸）を確定し、プレビュー→原寸へスケール
-// 既に resourceImageService を作っているならそれを優先
-const resource = resourceImageService || resourceCanvas || await (async () => {
-  // 最後の保険：info.jsonから幅高を取る
-  const base = IMAGE_URL.replace(/\/full\/.*$/, '');
-  const info = await fetch(base + '/info.json', { mode: 'cors' }).then(r => r.json());
-  const ctx = Array.isArray(info['@context']) ? info['@context'].join(' ') : String(info['@context'] || '');
-  const type = /image\/3/i.test(ctx) ? 'ImageService3' : 'ImageService2';
-  return { type, id: base, width: info.width, height: info.height };
-})();
-
-if (!resource || !resource.width || !resource.height) {
-  alert('原寸サイズ（info.json）を取得できませんでした'); return;
+function chooseResource() {
+  if (resourceCanvas) return resourceCanvas;
+  if (resourceImageService) return resourceImageService;
+  return null;
 }
 
-// DistortableImageが表示している実サイズ（プレビューの自然サイズ）
-const previewW = img._image.naturalWidth;
-const previewH = img._image.naturalHeight;
+// ===== 今の編集結果から Annotation を作る（原寸座標で） =====
+async function buildAnnotationForCurrent() {
+  await ensureImageReady(img);
+  const layers = Object.values(drawnItems._layers)
+  .filter(l => typeof l.getLatLngs === 'function');
+  if (!layers.length) throw new Error('Please write a polygon on the image.');
+  const poly = layers[layers.length - 1];                // 一番最後に描いたもの
+  let latlngs = poly.getLatLngs();
+  latlngs = Array.isArray(latlngs[0]) ? latlngs[0] : latlngs;
+  if (latlngs.length >= 2) {
+    const a = latlngs[0], b = latlngs[latlngs.length - 1];
+    if (a.lat === b.lat && a.lng === b.lng) latlngs.pop();
+  }
+  // 変換 LatLng -> プレビュー ピクセル
+  const T = buildTransforms(img, map);
+  const latlongArray = latlngs.map(ll => [ll.lat, ll.lng]);
+  
+  const pixelPreviewRaw = latlngs.map(ll => {
+    const { u, v } = T.latLngToImagePixel(ll);
+    return [u, v];
+  });
 
-// 原寸への拡大率
-const scaleX = resource.width  / previewW;
-const scaleY = resource.height / previewH;
+  const prevW = T.iw, prevH = T.ih;
+  const pixelPreview = pixelPreviewRaw.map(([u, v]) => ([
+  Math.max(0, Math.min(prevW - 1, Math.round(u))),
+  Math.max(0, Math.min(prevH - 1, Math.round(v)))
+]));
 
-// 原寸座標に変換（← Allmaps の resourceCoords は必ず target の座標系！）
-const pixelArray = pixelPreview.map(([u, v]) => [
-  Math.round(u * scaleX),
-  Math.round(v * scaleY)
-]);
+  //const serviceId = payload.canvas.imageServiceBase.replace(/\/$/, '');
+  const resource = resourceImageService || resourceCanvas || await (async () => {
+    const base = IMAGE_URL.replace(/\/full\/.*$/, '');
+    const info = await fetch(base + '/info.json', { mode: 'cors' }).then(r => r.json());
+    const ctx = Array.isArray(info['@context']) ? info['@context'].join(' ') : String(info['@context'] || '');
+    const type = /image\/3/i.test(ctx) ? 'ImageService3' : 'ImageService2';
+    return { type, id: base, width: (info.width|0), height: (info.height|0) }; // 整数化
+  })();
+  const source = makeAllmapsSource(payload, resource);
 
-// 4) マスクSVGも原寸座標で作る（重要）
-const pointsAttr = pixelArray.map(([x, y]) => `${x},${y}`).join(' ');
-const maskSvg = `<svg><polygon points="${pointsAttr}"/></svg>`;
+  if (!resource.width || !resource.height) throw new Error('原寸サイズ（info.json）が取得できません');
 
-// 5) 変換アルゴリズム（お好みで）
-// 角が射影（= ホモグラフィ）っぽいか簡易検知
-const H = (() => {
-  // buildTransformsの中で計算しているHを返せるならそれを使う
-  // ここでは再計算してもOK（img.getCorners() から）
-  const corners = img.getCorners(); // [NW,NE,SW,SE]
-  const dst = corners.map(ll => {
+  // 原寸へスケール（最後だけ丸める）
+const scaleX = resource.width  / T.iw;
+const scaleY = resource.height / T.ih;
+
+const pixelArray = pixelPreview.map(([u, v]) => ([
+  Math.max(0, Math.min(resource.width  - 1, Math.round(u * scaleX))),
+  Math.max(0, Math.min(resource.height - 1, Math.round(v * scaleY)))
+]));
+
+  // 射影なら TPS、そうでなければ affine
+  const [nw, ne, sw, se] = img.getCorners();
+  const dst = [nw, ne, sw, se].map(ll => {
     const p = map.latLngToLayerPoint(ll);
     return { x: p.x, y: p.y };
   });
+
   const iw = img._image.naturalWidth, ih = img._image.naturalHeight;
-  const src = [{x:0,y:0},{x:iw,y:0},{x:0,y:ih},{x:iw,y:ih}];
-  return computeHomography(src, dst);
-})();
-const p31 = H[2][0], p32 = H[2][1];
-const isProjective = Math.hypot(p31, p32) > 1e-8;
 
-// GCP が少なすぎるとTPS/2次は不安定 → 必要なら促す
-if (isProjective && latlongArray.length < 6) {
-  alert('四隅を動かした（射影）ようなので、GCPを6点以上に増やすと精度が上がります。\n（ポリゴン頂点を増やすのが手早いです）');
+  const src = [
+    { x: 0,  y: 0  },  // NW
+    { x: iw, y: 0  },  // NE
+    { x: 0,  y: ih },  // SW
+    { x: iw, y: ih }   // SE
+  ];
+
+  const isProjective = Math.hypot(T.H[2][0], T.H[2][1]) > 1e-8;
+  const transform = isProjective
+    ? { type: 'thinPlateSpline' }
+    : { type: 'polynomial', options: { order: 1 } };
+
+  // マスクSVG（原寸）
+  const pointsAttr = pixelArray.map(([x,y]) => `${x},${y}`).join(' ');
+  const maskSvg = `<svg width="${resource.width}" height="${resource.height}"><polygon points="${pointsAttr}"/></svg>`;
+  /*
+  // === 一致確認ログ ===
+  console.groupCollapsed('[Annotation debug]');
+  console.log('Preview size      :', T.iw, T.ih);
+  console.log('Resource size     :', resource.width, resource.height);
+  console.log('scaleX, scaleY    :', scaleX, scaleY);
+  console.log('isProjective      :', isProjective);
+  console.log('LatLng points     :', latlngs);
+  console.log('pixelPreview (px) :', pixelPreview);
+  console.log('pixelArray (full) :', pixelArray);
+  console.log('maskSvg snippet   :', pointsAttr.slice(0, 180) + '...');
+  console.log('Corners NW,NE,SW,SE:', img.getCorners());
+  console.log('H matrix          :', T.H);
+  console.log('Hinv matrix       :', T.Hinv);
+  console.log('Source info       :', source);
+  console.groupEnd();
+  */
+  // Annotation 生成
+  const anno = buildAllmapsAnnotation({ source, pixelArray, latlongArray, maskSvg, transform });
+
+  // リスト表示用の軽いメタ情報
+  const label = (payload.canvas.label || '').toString() || new URL(resource.id).pathname.split('/').pop();
+  const thumb = payload.canvas.imageServiceBase ? `${payload.canvas.imageServiceBase.replace(/\/$/,'')}/full/!300,300/0/default.jpg` : '';
+
+  return { annotation: anno, label, thumb };
 }
-
-// 射影なら TPS（推奨）か 2次多項式に
-const transform = isProjective
-  ? { type: 'thinPlateSpline' }
-  : { type: 'polynomial', options: { order: 1 } };   // 歪ませていないなら affine
-
-
-      // 6) 注釈生成 → ダウンロード
-      const annotation = buildAllmapsAnnotation({ resource, pixelArray, latlongArray, maskSvg, transform });
-      const json = JSON.stringify(annotation, null, 2);
-      const blob = new Blob([json], { type: 'application/json' });
-      const a = document.createElement('a');
-      a.href = URL.createObjectURL(blob);
-      a.download = 'allmaps-georef-annotation.json';
-      a.click();
-      URL.revokeObjectURL(a.href);
-    } catch (err) {
-      console.error(err);
-      alert('出力に失敗: ' + err.message);
-    }
-  });
 
   // ========= ユーティリティ群（1回だけ定義） =========
 
@@ -239,6 +334,7 @@ const transform = isProjective
     }
     return M.map(row => row[n]);
   }
+
   function computeHomography(src, dst) {
     const A = [], b = [];
     for (let i = 0; i < 4; i++) {
@@ -265,17 +361,31 @@ const transform = isProjective
   };
 
   // --- 画像 ⇄ 地図 変換（現在の四隅から） ---
+
   function buildTransforms(img, map) {
-    const corners = img.getCorners(); // [NW, NE, SW, SE]
-    const dst = corners.map(ll => {
+    // DistortableImage は [NW, NE, SW, SE] で安定利用
+    const [nw, ne, sw, se] = img.getCorners();
+
+    const iw = img._image.naturalWidth;
+    const ih = img._image.naturalHeight;
+
+    // 画像座標（Y下向き）も NW,NE,SW,SE の順
+    const src = [
+      { x: 0,  y: 0  },  // NW
+      { x: iw, y: 0  },  // NE
+      { x: 0,  y: ih },  // SW
+      { x: iw, y: ih }   // SE
+    ];
+
+    // 地図レイヤピクセル（同順）
+    const dst = [nw, ne, sw, se].map(ll => {
       const p = map.latLngToLayerPoint(ll);
       return { x: p.x, y: p.y };
     });
-    const iw = img._image.naturalWidth;
-    const ih = img._image.naturalHeight;
-    const src = [{ x: 0, y: 0 }, { x: iw, y: 0 }, { x: 0, y: ih }, { x: iw, y: ih }];
+
     const H = computeHomography(src, dst);
     const Hinv = invert3(H);
+
     return {
       latLngToImagePixel: (ll) => {
         const lp = map.latLngToLayerPoint(ll);
@@ -285,39 +395,46 @@ const transform = isProjective
       imagePixelToLatLng: (u, v) => {
         const lp = applyH(H, { x: u, y: v });
         return map.layerPointToLatLng(L.point(lp.x, lp.y));
-      }
+      },
+      // 使い回し用
+      H, Hinv, iw, ih
     };
   }
 
-  // --- Allmaps 注釈生成 ---
-  function buildAllmapsAnnotation({ resource, pixelArray, latlongArray, maskSvg, transform }) {
-    if (!resource || !resource.id || !resource.type) throw new Error('resource is invalid');
-    if (!pixelArray?.length || pixelArray.length !== latlongArray?.length || pixelArray.length < 3)
-      throw new Error('GCP must have 3 points. pixelArray と latlongArray を同数対応で');
 
-    const target = maskSvg
-      ? {
-          type: 'SpecificResource',
-          source: { id: resource.id, type: resource.type, width: resource.width, height: resource.height, ...(resource.partOf ? { partOf: resource.partOf } : {}) },
-          selector: { type: 'SvgSelector', value: maskSvg }
-        }
-      : { id: resource.id, type: resource.type, width: resource.width, height: resource.height, ...(resource.partOf ? { partOf: resource.partOf } : {}) };
+  // --- Allmaps 注釈生成 ---
+  function buildAllmapsAnnotation({ source, pixelArray, latlongArray, maskSvg, transform }) {
+    if (!source?.id || !source?.width || !source?.height) {
+      throw new Error('source(id/width/height) が不足');
+    }
+    if (!pixelArray?.length || pixelArray.length !== latlongArray?.length) {
+      throw new Error('The length of pixelArray and latlongArray must be same.');
+    }
+
+    const target = {
+      type: 'SpecificResource',
+      source,
+      selector: { type: 'SvgSelector', value: maskSvg }
+    };
 
     const features = pixelArray.map(([x, y], i) => {
       const [lat, lng] = latlongArray[i];
       return {
         type: 'Feature',
-        properties: { resourceCoords: [x, y] },
-        geometry: { type: 'Point', coordinates: [lng, lat] } // GeoJSON は [lon,lat]
+        properties: { resourceCoords: [x|0, y|0] }, // 念のため整数化
+        geometry: { type: 'Point', coordinates: [lng, lat] }
       };
     });
 
+    const annoId = `${source.id}#${Date.now()}-${Math.random().toString(36).slice(2,8)}`;
+
     return {
+      id: annoId,
+      type: 'Annotation',
       "@context": [
         "http://iiif.io/api/extension/georef/1/context.json",
         "http://iiif.io/api/presentation/3/context.json"
       ],
-      type: "Annotation",
       motivation: "georeferencing",
       target,
       body: {
@@ -328,4 +445,87 @@ const transform = isProjective
     };
   }
 
+  renderProjectList(loadProject());
+  // UI: 追加ボタン（index.htmlへ戻って別画像を選ぶ）
+  document.getElementById('addAnother').addEventListener('click', ()=>{
+    // editorを閉じず、プロジェクト配列は保持
+    location.href = './index.html';
+  });
+
+  // UI: Annotation をプロジェクトに保存
+  document.getElementById('saveToProject').addEventListener('click', async ()=>{
+    try {
+      const item = await buildAnnotationForCurrent();
+      const arr = addToProject(item);
+      renderProjectList(arr);
+      alert('item saved to the current project.');
+    } catch (e) {
+      console.error(e); alert('error occurred in the saving process : ' + e.message);
+    }
+  });
+
+  // UI: AnnotationPage をダウンロード
+  document.getElementById('downloadPage').addEventListener('click', ()=>{
+    const arr = loadProject();
+    if (!arr.length) { alert('There is no item!'); return; }
+    const page = {
+      "@context": "http://www.w3.org/ns/anno.jsonld",
+      "type": "AnnotationPage",
+      "items": arr.map(x => x.annotation) // 中身は各単独 Annotation
+    };
+
+    const json = JSON.stringify(page, null, 2);
+    const blob = new Blob([json], { type:'application/json' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'allmaps-annotation-page.json';
+    a.click();
+    URL.revokeObjectURL(a.href);
+  });
+
+
+  // 右パネルのリスト描画（削除付き）
+  function renderProjectList(arr) {
+    const box = document.getElementById('projectList');
+    if (!box) return;
+    box.innerHTML = '';
+    arr.forEach((item, i) => {
+      const row = document.createElement('div');
+      row.style.display = 'grid';
+      row.style.gridTemplateColumns = '48px 1fr auto';
+      row.style.alignItems = 'center';
+      row.style.gap = '8px';
+      row.style.padding = '6px';
+      row.style.borderBottom = '1px solid #eee';
+
+      const imgEl = document.createElement('img');
+      imgEl.src = item.thumb || '';
+      imgEl.style.width = '48px';
+      imgEl.style.height = '48px';
+      imgEl.style.objectFit = 'cover';
+      imgEl.alt = '';
+
+      const cap = document.createElement('div');
+      cap.textContent = item.label || `item ${i+1}`;
+      cap.style.fontSize = '12px';
+
+      const del = document.createElement('button');
+      del.textContent = '🗑️';
+      del.title = '削除';
+      del.addEventListener('click', ()=>{
+        const after = removeFromProject(i);
+        renderProjectList(after);
+      });
+
+       // 件数ラベルの更新
+      const titleEl = document.querySelector('.ctl div:nth-of-type(3)');
+      if (titleEl) titleEl.firstChild.textContent = `Saved items（${arr.length}）`;
+
+      row.appendChild(imgEl);
+      row.appendChild(cap);
+      row.appendChild(del);
+      box.appendChild(row);
+    });
+  }
 })();
+
