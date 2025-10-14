@@ -155,25 +155,8 @@ const pixelArray = pixelPreview.map(([u, v]) => [
 const pointsAttr = pixelArray.map(([x, y]) => `${x},${y}`).join(' ');
 const maskSvg = `<svg><polygon points="${pointsAttr}"/></svg>`;
 
-/*
-      // 2) 変換（LatLng → 画像ピクセル）
-      const T = buildTransforms(img, map);
-      const latlongArray = latlngs.map(ll => [ll.lat, ll.lng]);
-      const pixelArray = latlngs.map(ll => {
-        const { u, v } = T.latLngToImagePixel(ll);
-        return [Math.round(u), Math.round(v)];
-      });
-
-      // 3) マスクSVG（任意）
-      const pointsAttr = pixelArray.map(([x, y]) => `${x},${y}`).join(' ');
-      const maskSvg = `<svg><polygon points="${pointsAttr}"/></svg>`;
-
-      // 4) resource 選択（ここでは ImageService を既定。Canvas で出したければ切替）
-      const resource = resourceImageService || resourceCanvas;
-      if (!resource) { alert('出力対象（Canvas / ImageService）が見つかりません'); return; }
-*/
-      // 5) 変換アルゴリズム（お好みで）
-      // 角が射影（= ホモグラフィ）っぽいか簡易検知
+// 5) 変換アルゴリズム（お好みで）
+// 角が射影（= ホモグラフィ）っぽいか簡易検知
 const H = (() => {
   // buildTransformsの中で計算しているHを返せるならそれを使う
   // ここでは再計算してもOK（img.getCorners() から）
@@ -196,8 +179,7 @@ if (isProjective && latlongArray.length < 6) {
 
 // 射影なら TPS（推奨）か 2次多項式に
 const transform = isProjective
-  ? { type: 'thinPlateSpline' }             // おすすめ
-  // ? { type: 'polynomial', options: { order: 2 } }  // こちらでも近似可
+  ? { type: 'thinPlateSpline' }
   : { type: 'polynomial', options: { order: 1 } };   // 歪ませていないなら affine
 
 
