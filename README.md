@@ -3,9 +3,11 @@
 
 Es gibt bereits einen [offiziellen Editor von Allmaps](https://editor.allmaps.org/) - Aber wenn man noch bequemer eine IIIF-Karte zu Allmaps-Karte umwandeln möchte, kann man diesen Editor verwenden.
 
-Bsp-Ergebnis: https://gist.githubusercontent.com/NbtKmy/4b4b488c11c36c180fc9431ab5f81e30/raw/4d49bc33827ba4a3b434b8b1f875451cbaa3bf89/gistfile1.txt
+URL: https://nbtkmy.github.io/iiif_map/
 
-Auf Allmaps: https://viewer.allmaps.org/?url=https%3A%2F%2Fgist.githubusercontent.com%2FNbtKmy%2F4b4b488c11c36c180fc9431ab5f81e30%2Fraw%2F4d49bc33827ba4a3b434b8b1f875451cbaa3bf89%2Fgistfile1.txt
+Bsp-Ergebnis: https://gist.githubusercontent.com/NbtKmy/ff30336c97a1ce5609da8415de2d0c90/raw/a3b32ec53587869c778536868e5a8a9170f1ad3a/allmaps-annotation-page.json
+
+Auf Allmaps: https://viewer.allmaps.org/?url=https%3A%2F%2Fgist.githubusercontent.com%2FNbtKmy%2Fff30336c97a1ce5609da8415de2d0c90%2Fraw%2Fa3b32ec53587869c778536868e5a8a9170f1ad3a%2Fallmaps-annotation-page.json
 
 
 ## Verwendete Plugins
@@ -17,7 +19,11 @@ Auf Allmaps: https://viewer.allmaps.org/?url=https%3A%2F%2Fgist.githubuserconten
 
 ## Hintergrund
 
-[**IIIF Georeference Extension**](https://iiif.io/api/extension/georef/) seit 2023
+[**IIIF Georeference Extension**](https://iiif.io/api/extension/georef/) wurde 2023 entwickelt und publiziert.
+[Allmaps Viewer](https://viewer.allmaps.org/) ist ein Produkt mit dieser Erweiterung.
+Die Entwickler von Allmaps bieten noch mehr tools - Näheres [hier](https://allmaps.org/).
+
+Die IIIF Georeferenz-Erweiterung besteht aus den folgenden Elementen:
 
 | Data | Georeference Annotation |
 |------|-------------------------|
