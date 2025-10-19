@@ -209,7 +209,7 @@ async function buildAnnotationForCurrent() {
   // 変換 LatLng -> プレビュー ピクセル
   const T = buildTransforms(img, map);
   const latlongArray = latlngs.map(ll => [ll.lat, ll.lng]);
-  
+  /*
   const pixelPreviewRaw = latlngs.map(ll => {
     const { u, v } = T.latLngToImagePixel(ll);
     return [u, v];
@@ -220,6 +220,16 @@ async function buildAnnotationForCurrent() {
   Math.max(0, Math.min(prevW - 1, Math.round(u))),
   Math.max(0, Math.min(prevH - 1, Math.round(v)))
 ]));
+  */
+  const prevW = T.iw;
+  const prevH = T.ih;
+  const pixelPreview = latlngs.map(ll => {
+    const { u, v } = T.latLngToImagePixel(ll);
+    // 小数のままクランプ
+    const uu = Math.max(0, Math.min(prevW - 1, u));
+    const vv = Math.max(0, Math.min(prevH - 1, v));
+    return [uu, vv];
+  });
 
   //const serviceId = payload.canvas.imageServiceBase.replace(/\/$/, '');
   const resource = resourceImageService || resourceCanvas || await (async () => {
@@ -237,11 +247,14 @@ async function buildAnnotationForCurrent() {
 const scaleX = resource.width  / T.iw;
 const scaleY = resource.height / T.ih;
 
+const pixelArray = pixelPreview.map(([u, v]) => [u * scaleX, v * scaleY]);
+
+/*
 const pixelArray = pixelPreview.map(([u, v]) => ([
   Math.max(0, Math.min(resource.width  - 1, Math.round(u * scaleX))),
   Math.max(0, Math.min(resource.height - 1, Math.round(v * scaleY)))
 ]));
-
+*/
   // 射影なら TPS、そうでなければ affine
   const [nw, ne, sw, se] = img.getCorners();
   const dst = [nw, ne, sw, se].map(ll => {
@@ -259,30 +272,64 @@ const pixelArray = pixelPreview.map(([u, v]) => ([
   ];
 
   const isProjective = Math.hypot(T.H[2][0], T.H[2][1]) > 1e-8;
-  const transform = isProjective
-    ? { type: 'thinPlateSpline' }
-    : { type: 'polynomial', options: { order: 1 } };
+  let transform = { type: 'polynomial', options: { order: 1 } };
+  if (isProjective) {
+    transform = { type: 'polynomial', options: { order: 2 } };
+  }
+  
+  // === 誤差ログ：ここから（pixelArray 計算の直後、maskSvg の直前）===
+  try {
+    // 1) 地図→プレビューpx→地図 の往復誤差（メートル）
+    const backErrs = latlngs.map((ll) => {
+      const { u, v } = T.latLngToImagePixel(ll);
+      const ll2 = T.imagePixelToLatLng(u, v);
+      return ll.distanceTo(ll2); // meters
+    });
+    const maxBack = Math.max(...backErrs);
+
+    // 2) 原寸px → プレビューpxに戻して地図へ（丸め/スケーリングの影響を見る）
+    const llBackFromFull = pixelArray.map(([X, Y]) => {
+      const u = X / scaleX; // back to preview
+      const v = Y / scaleY;
+      return T.imagePixelToLatLng(u, v);
+    });
+    const fullRoundTripErrs = llBackFromFull.map((ll2, i) => latlngs[i].distanceTo(ll2));
+    const maxFullRound = Math.max(...fullRoundTripErrs);
+
+    // 3) GCP(px) と マスク頂点(px) の最大差（ピクセル）
+    //    ※ マスクは toFixed(2) だが、数値としての差を確認
+    const pxDiffs = pixelArray.map(([X, Y], i) => {
+      const { u, v } = T.latLngToImagePixel(latlngs[i]); // preview px
+      const X2 = u * scaleX; // expected full px from preview
+      const Y2 = v * scaleY;
+      return Math.hypot(X - X2, Y - Y2);
+    });
+    const maxPxDiff = Math.max(...pxDiffs);
+
+    console.groupCollapsed('[Georef debug]');
+    console.log('Preview size (iw,ih):', T.iw, T.ih);
+    console.log('Resource size        :', resource.width, resource.height);
+    console.log('scaleX, scaleY       :', scaleX, scaleY);
+    console.log('isProjective         :', isProjective);
+    console.log('Back-proj err (m)    : max =', maxBack.toFixed(3), 'each =', backErrs.map(e=>e.toFixed(3)));
+    console.log('Full roundtrip (m)   : max =', maxFullRound.toFixed(3), 'each =', fullRoundTripErrs.map(e=>e.toFixed(3)));
+    console.log('Mask vs GCP (px)     : max =', maxPxDiff.toFixed(3), 'each =', pxDiffs.map(e=>e.toFixed(3)));
+    console.log('pixelPreview (px)    :', pixelPreview);
+    console.log('pixelArray (full px) :', pixelArray);
+    console.groupEnd();
+  } catch (e) {
+    console.warn('[Georef debug] logging failed:', e);
+  }
+  // === 誤差ログ：ここまで ===
+
 
   // マスクSVG（原寸）
-  const pointsAttr = pixelArray.map(([x,y]) => `${x},${y}`).join(' ');
+  //const pointsAttr = pixelArray.map(([x,y]) => `${x},${y}`).join(' ');
+  const pointsAttr = pixelArray
+    .map(([x, y]) => `${x.toFixed(2)},${y.toFixed(2)}`)
+    .join(' ');
   const maskSvg = `<svg width="${resource.width}" height="${resource.height}"><polygon points="${pointsAttr}"/></svg>`;
-  /*
-  // === 一致確認ログ ===
-  console.groupCollapsed('[Annotation debug]');
-  console.log('Preview size      :', T.iw, T.ih);
-  console.log('Resource size     :', resource.width, resource.height);
-  console.log('scaleX, scaleY    :', scaleX, scaleY);
-  console.log('isProjective      :', isProjective);
-  console.log('LatLng points     :', latlngs);
-  console.log('pixelPreview (px) :', pixelPreview);
-  console.log('pixelArray (full) :', pixelArray);
-  console.log('maskSvg snippet   :', pointsAttr.slice(0, 180) + '...');
-  console.log('Corners NW,NE,SW,SE:', img.getCorners());
-  console.log('H matrix          :', T.H);
-  console.log('Hinv matrix       :', T.Hinv);
-  console.log('Source info       :', source);
-  console.groupEnd();
-  */
+  
   // Annotation 生成
   const anno = buildAllmapsAnnotation({ source, pixelArray, latlongArray, maskSvg, transform });
 
@@ -421,7 +468,8 @@ const pixelArray = pixelPreview.map(([u, v]) => ([
       const [lat, lng] = latlongArray[i];
       return {
         type: 'Feature',
-        properties: { resourceCoords: [x|0, y|0] }, // 念のため整数化
+        //properties: { resourceCoords: [x|0, y|0] }, // 念のため整数化
+        properties: { resourceCoords: [x, y] }, // 小数のまま
         geometry: { type: 'Point', coordinates: [lng, lat] }
       };
     });
